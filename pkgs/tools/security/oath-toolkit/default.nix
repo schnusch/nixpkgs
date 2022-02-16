@@ -19,8 +19,6 @@ in stdenv.mkDerivation rec {
 
   configureFlags = lib.optionals stdenv.isDarwin [ "--disable-pam" ];
 
-  passthru.updateScript = ./update.sh;
-
   meta = with lib; {
     description = "Components for building one-time password authentication systems";
     homepage = "https://www.nongnu.org/oath-toolkit/";

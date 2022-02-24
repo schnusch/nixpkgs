@@ -22,9 +22,10 @@ in
         type = types.str;
         default = "localhost";
         description = ''
-          The IP address on which Xandikos will listen.
+          The IP address or socket path on which Xandikos will listen.
           By default listens on localhost.
         '';
+        example = "/run/xandikos/socket";
       };
 
       port = mkOption {
@@ -122,7 +123,7 @@ in
             ExecStart = ''
               ${cfg.package}/bin/xandikos \
                 --directory /var/lib/xandikos \
-                --listen-address ${cfg.address} \
+                --listen-address ${escapeShellArg cfg.address} \
                 --port ${toString cfg.port} \
                 --route-prefix ${cfg.routePrefix} \
                 ${lib.concatStringsSep " " cfg.extraOptions}
@@ -137,7 +138,12 @@ in
             enable = true;
             virtualHosts."${cfg.nginx.hostName}" = {
               locations."/" = {
-                proxyPass = "http://${cfg.address}:${toString cfg.port}/";
+                proxyPass = "http://${
+                  if hasInfix "/" cfg.address then
+                    "unix:${cfg.address}"
+                  else
+                    "${cfg.address}:${toString cfg.port}"
+                }";
               };
             };
           };

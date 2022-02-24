@@ -4,8 +4,18 @@ with lib;
 
 let
   cfg = config.services.xandikos;
+
+  enabledInstances = filterAttrs (instance: instanceCfg: instanceCfg.enable) cfg.instances;
 in
 {
+  imports = [
+    (mkRemovedOptionModule ["services" "xandikos" "address"] ''
+      Use services.xandikos.instances.<instance>.address instead.
+    '')
+    (mkRemovedOptionModule ["services" "xandikos" "port"] ''
+      Use services.xandikos.instances.<instance>.port instead.
+    '')
+  ];
 
   options = {
     services.xandikos = {
@@ -18,91 +28,121 @@ in
         description = "The Xandikos package to use.";
       };
 
-      address = mkOption {
-        type = types.str;
-        default = "localhost";
-        description = ''
-          The IP address or socket path on which Xandikos will listen.
-          By default listens on localhost.
-        '';
-        example = "/run/xandikos/socket";
-      };
-
-      port = mkOption {
-        type = types.port;
-        default = 8080;
-        description = "The port of the Xandikos web application";
-      };
-
-      routePrefix = mkOption {
-        type = types.str;
-        default = "/";
-        description = ''
-          Path to Xandikos.
-          Useful when Xandikos is behind a reverse proxy.
-        '';
-      };
-
-      extraOptions = mkOption {
-        default = [];
-        type = types.listOf types.str;
-        example = literalExpression ''
-          [ "--autocreate"
-            "--defaults"
-            "--current-user-principal user"
-            "--dump-dav-xml"
-          ]
-        '';
-        description = ''
-          Extra command line arguments to pass to xandikos.
-        '';
-      };
-
-      nginx = mkOption {
+      instances = mkOption {
+        description = "Configure an instance.";
         default = {};
-        description = ''
-          Configuration for nginx reverse proxy.
-        '';
-
-        type = types.submodule {
+        type = types.attrsOf (types.submodule {
           options = {
-            enable = mkOption {
-              type = types.bool;
-              default = false;
+            enable = (mkEnableOption "this Xandikos instance") // {
+              default = true;
+              example = false;
+            };
+
+            address = mkOption {
+              type = types.nullOr types.str;
+              default = null;
+              defaultText = "/run/xandikos/\${instance}/socket";
               description = ''
-                Configure the nginx reverse proxy settings.
+                The IP address or socket path on which Xandikos will listen.
+                By default listens on localhost.
+              '';
+              example = "localhost";
+            };
+
+            port = mkOption {
+              type = types.port;
+              default = 8080;
+              description = "The port of the Xandikos web application";
+            };
+
+            routePrefix = mkOption {
+              type = types.str;
+              default = "/";
+              description = ''
+                Path to Xandikos.
+                Useful when Xandikos is behind a reverse proxy.
               '';
             };
 
-            hostName = mkOption {
-              type = types.str;
-              description = ''
-                The hostname use to setup the virtualhost configuration
+            extraOptions = mkOption {
+              default = [];
+              type = types.listOf types.str;
+              example = literalExpression ''
+                [ "--autocreate"
+                  "--defaults"
+                  "--current-user-principal user"
+                  "--dump-dav-xml"
+                ]
               '';
+              description = ''
+                Extra command line arguments to pass to xandikos.
+              '';
+            };
+
+            nginx = mkOption {
+              default = {};
+              description = ''
+                Configuration for nginx reverse proxy.
+              '';
+
+              type = types.submodule {
+                options = {
+                  enable = mkOption {
+                    type = types.bool;
+                    default = false;
+                    description = ''
+                      Configure the nginx reverse proxy settings.
+                    '';
+                  };
+
+                  hostName = mkOption {
+                    type = types.str;
+                    description = ''
+                      The hostname use to setup the virtualhost configuration
+                    '';
+                  };
+                };
+              };
             };
           };
-        };
+        });
       };
 
     };
 
   };
 
-  config = mkIf cfg.enable (
-    mkMerge [
+  config = mkIf cfg.enable {
+    assertions = [
       {
-        meta.maintainers = with lib.maintainers; [ _0x4A6F ];
+        assertion = cfg.instances != {};
+        message = ''
+          You need to configure at least one Xandikos instance. E.g. services.xandikos.instances.default.address = "localhost";
+        '';
+      }
+    ];
 
-        systemd.services.xandikos = {
-          description = "A Simple Calendar and Contact Server";
+    meta.maintainers = with lib.maintainers; [ _0x4A6F ];
+
+    systemd.targets.xandikos = {
+      description = "A Simple Calendar and Contact Server";
+      wantedBy = [ "multi-user.target" ];
+    };
+
+    systemd.services = mapAttrs'
+      (instance: instanceCfg: nameValuePair
+        "xandikos@${instance}"
+        {
+          description = "A Simple Calendar and Contact Server for ${instance}";
           after = [ "network.target" ];
           wantedBy = [ "multi-user.target" ];
+          requiredBy = [ "xandikos.target" ];
+          partOf = [ "xandikos.target" ];
 
           serviceConfig = {
             User = "xandikos";
             Group = "xandikos";
             DynamicUser = "yes";
-            RuntimeDirectory = "xandikos";
             StateDirectory = "xandikos";
             StateDirectoryMode = "0700";
             PrivateDevices = true;
@@ -123,32 +163,41 @@ in
             ExecStart = ''
               ${cfg.package}/bin/xandikos \
                 --directory /var/lib/xandikos \
-                --listen-address ${escapeShellArg cfg.address} \
-                --port ${toString cfg.port} \
-                --route-prefix ${cfg.routePrefix} \
-                ${lib.concatStringsSep " " cfg.extraOptions}
-            '';
-          };
-        };
-      }
-
-      (
-        mkIf cfg.nginx.enable {
-          services.nginx = {
-            enable = true;
-            virtualHosts."${cfg.nginx.hostName}" = {
-              locations."/" = {
-                proxyPass = "http://${
-                  if hasInfix "/" cfg.address then
-                    "unix:${cfg.address}"
+                --listen-address ${escapeShellArg (
+                  if instanceCfg.address == null then
+                    "/run/xandikos/${instance}/socket"
                   else
-                    "${cfg.address}:${toString cfg.port}"
+                   instanceCfg.address
+                )} \
+                --port ${toString instanceCfg.port} \
+                --route-prefix ${instanceCfg.routePrefix} \
+                ${lib.concatStringsSep " " instanceCfg.extraOptions}
+            '';
+          } // (optionalAttrs (instanceCfg.address == null) {
+            RuntimeDirectory = "xandikos/${instance}";
+          });
+        })
+      enabledInstances;
+
+    services.nginx =
+      let
+        virtualHosts =
+          mapAttrs'
+            (_: instanceCfg: nameValuePair
+              instanceCfg.nginx.hostName
+              {
+                locations."/".proxyPass = "http://${
+                  if hasInfix "/" cfg.address then
+                    "unix:${instanceCfg.address}"
+                  else
+                    "${instanceCfg.address}:${toString instanceCfg.port}"
                 }";
-              };
-            };
-          };
-        }
-      )
-    ]
-  );
+              })
+            (filterAttrs (_: { nginx, ... }: nginx.enable) enabledInstances);
+      in
+        optionalAttrs (virtualHosts != {}) {
+          enable = true;
+          inherit virtualHosts;
+        };
+  };
 }

@@ -1,5 +1,5 @@
 #!/usr/bin/env nix-shell
-#!nix-shell -i bash -p curl crystal crystal2nix jq git moreutils nix nix-prefetch pkg-config
+#!nix-shell -i bash -p curl crystal crystal2nix jq git moreutils nixUnstable nix-prefetch pkg-config
 git_url='https://github.com/iv-org/invidious.git'
 git_branch='master'
 git_dir='/var/tmp/invidious.git'
@@ -60,7 +60,7 @@ info "Running scripts/fetch-player-dependencies.cr..."
 git -C "$git_dir" reset --hard "$new_rev"
 (cd "$git_dir" && crystal run scripts/fetch-player-dependencies.cr -- --minified)
 rm -f "$git_dir/assets/videojs/.gitignore"
-videojs_new_sha256=$(nix hash-path --type sha256 --base32 "$git_dir/assets/videojs")
+videojs_new_sha256=$(nix --extra-experimental-features nix-command hash-path --type sha256 --base32 "$git_dir/assets/videojs")
 json_set '.videojs.sha256' "$videojs_new_sha256"
 
 if git -C "$git_dir" diff-tree --quiet "${old_rev}..${new_rev}" -- 'shard.lock'; then
@@ -72,7 +72,7 @@ else
     lsquic_old_version=$(json_get '.lsquic.version')
     # lsquic.cr's version tracks lsquic's, so lsquic must be updated to the
     # version in the shards file
-    lsquic_new_version=$(nix eval --raw -f 'shards.nix' lsquic.rev \
+    lsquic_new_version=$(nix --extra-experimental-features nix-command eval --raw -f 'shards.nix' lsquic.rev \
         | sed -e 's/^v//' -e 's/-[0-9]*$//')
     if [ "$lsquic_old_version" != "$lsquic_new_version" ]; then
         info "Updating lsquic to $lsquic_new_version..."

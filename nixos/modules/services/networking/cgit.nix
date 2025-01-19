@@ -104,6 +104,19 @@ let
         type = types.lines;
         default = "";
       };
+
+      locationConfig = mkOption {
+        description = "Additional declarative location config for nginx";
+        type = types.submodule (import ../web-servers/nginx/location-options.nix { inherit lib config; });
+        default = { };
+        example = literalExpression ''
+          {
+            basicAuth = {
+              user = "password";
+            };
+          }
+        '';
+      };
     };
   };
 
@@ -331,24 +344,30 @@ in
               ]
           )
           ++ (mapAttrsToList (loc: locCfg: {
-            "~ ${regexLocation loc}/.+/(info/refs|git-upload-pack)" = {
-              fastcgiParams = rec {
-                SCRIPT_FILENAME = "${pkgs.git}/libexec/git-core/git-http-backend";
-                GIT_HTTP_EXPORT_ALL = "1";
-                GIT_PROJECT_ROOT = gitProjectRoot locCfg;
-                HOME = GIT_PROJECT_ROOT;
-              };
-              extraConfig = mkFastcgiPass { inherit loc locCfg; };
-            };
-            "${stripLocation loc}/" = {
-              fastcgiParams = {
-                SCRIPT_FILENAME = "${vhostCfg.package}/cgit/cgit.cgi";
-                QUERY_STRING = "$args";
-                HTTP_HOST = "$server_name";
-                CGIT_CONFIG = mkCgitrc loc locCfg;
-              };
-              extraConfig = mkFastcgiPass { inherit loc locCfg; };
-            };
+            "~ ${regexLocation loc}/.+/(info/refs|git-upload-pack)" = mkMerge [
+              locCfg.locationConfig
+              {
+                fastcgiParams = rec {
+                  SCRIPT_FILENAME = "${pkgs.git}/libexec/git-core/git-http-backend";
+                  GIT_HTTP_EXPORT_ALL = "1";
+                  GIT_PROJECT_ROOT = gitProjectRoot locCfg;
+                  HOME = GIT_PROJECT_ROOT;
+                };
+                extraConfig = mkFastcgiPass { inherit loc locCfg; };
+              }
+            ];
+            "${stripLocation loc}/" = mkMerge [
+              locCfg.locationConfig
+              {
+                fastcgiParams = {
+                  SCRIPT_FILENAME = "${vhostCfg.package}/cgit/cgit.cgi";
+                  QUERY_STRING = "$args";
+                  HTTP_HOST = "$server_name";
+                  CGIT_CONFIG = mkCgitrc loc locCfg;
+                };
+                extraConfig = mkFastcgiPass { inherit loc locCfg; };
+              }
+            ];
           }) vhostCfg.locations)
         );
       }) cfg.virtualHosts;

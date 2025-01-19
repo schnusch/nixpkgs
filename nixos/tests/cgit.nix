@@ -36,6 +36,11 @@ import ./make-test-python.nix (
                       desc = "some-repo description";
                     };
                   };
+                  locationConfig = {
+                    basicAuth = {
+                      git = "password";
+                    };
+                  };
                 };
                 "/scan-path/" = {
                   scanPath = "/var/lib/git/scan-path";
@@ -59,7 +64,7 @@ import ./make-test-python.nix (
         from typing import Optional
 
         locations = {
-            "(c)git": None,
+            "(c)git": "git:password",
             "scan-path": None,
         }
 
@@ -89,7 +94,8 @@ import ./make-test-python.nix (
 
         server.succeed("curl -fsS http://localhost/robots.txt | diff -u - ${robotsTxt}")
 
-        server.succeed(f"curl -fsS {curl_url('(c)git')} | grep -F 'some-repo description'")
+        server.fail(f"curl -fsS {curl_url('(c)git')}")
+        server.succeed(f"curl -fsS {curl_url('(c)git', auth=locations['(c)git'])} | grep -F 'some-repo description'")
 
         for location, auth in locations.items():
             server.succeed("${pkgs.writeShellScript "setup-cgit-test-repo" ''
@@ -112,6 +118,9 @@ import ./make-test-python.nix (
                 f"git clone {git_url(location, 'some-repo', auth)} {shlex.quote(location)}/some-repo",
                 f"diff -u {shlex.quote(location)}/reference/date.txt {shlex.quote(location)}/some-repo/date.txt"
             )
+
+        server.fail(f"GIT_ASKPASS=true git clone {git_url('(c)git', 'some-repo')} '(c)git/some-repo-2'")
+        server.succeed(f"GIT_ASKPASS=true git clone {git_url('scan-path', 'some-repo')} 'scan-path/some-repo-2'")
       '';
   }
 )
